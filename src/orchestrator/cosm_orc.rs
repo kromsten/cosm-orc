@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::env::consts::ARCH;
 use std::ffi::OsStr;
 use std::fmt::{self, Debug};
-use std::fs;
+use std::{env, fs};
 use std::future::Future;
 use std::panic::Location;
 use std::path::Path;
@@ -127,9 +127,30 @@ impl<C: CosmosClient> CosmOrc<C> {
         for wasm in fs::read_dir(wasm_path).map_err(StoreError::wasmdir)? {
             let wasm_path = wasm?.path();
             if wasm_path.extension() == Some(OsStr::new("wasm")) {
-                info!("Storing {:?}", wasm_path);
 
+                let mut contract = wasm_path
+                    .file_stem()
+                    .ok_or(StoreError::InvalidWasmFileName)?
+                    .to_str()
+                    .ok_or(StoreError::InvalidWasmFileName)?;
+
+                // parse out OS architecture if optimizoor was used:
+                let arch_suffix = format!("-{ARCH}");
+                if contract.to_string().ends_with(&arch_suffix) {
+                    contract = contract.trim_end_matches(&arch_suffix);
+                }
+
+                let override_store = env::var("OVERRIDE_STORE")
+                    .unwrap_or_else(|_| "false".to_string())
+                    .parse::<bool>().unwrap();
+
+                if self.contract_map.code_id(contract).is_ok() && !override_store {
+                    continue;
+                }
+
+                info!("Storing {:?}", wasm_path);
                 let wasm = fs::read(&wasm_path).map_err(StoreError::wasmfile)?;
+
 
                 let res = tokio_block(async {
                     self.client
